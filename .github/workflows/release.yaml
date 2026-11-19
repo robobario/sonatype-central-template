@@ -1,0 +1,92 @@
+name: Release
+
+# Manually triggered release: builds, signs and publishes the release version to
+# Maven Central, tags it, creates a GitHub release, then commits the next
+# development (-SNAPSHOT) version.
+#
+# Secrets required:
+#   CENTRAL_TOKEN_USERNAME - Sonatype Central user token username
+#   CENTRAL_TOKEN_PASSWORD - Sonatype Central user token password
+#   GPG_PRIVATE_KEY        - Armoured private key used to sign release artifacts
+#   GPG_PASSPHRASE          - Passphrase for GPG_PRIVATE_KEY
+
+on:
+  workflow_dispatch:
+    inputs:
+      release-version:
+        description: 'Version to release, e.g. 0.2.0'
+        required: true
+      next-version:
+        description: 'Next development version, e.g. 0.3.0-SNAPSHOT'
+        required: true
+      branch:
+        description: 'Branch to release from'
+        required: false
+        default: 'main'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ inputs.branch }}
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Set up Java
+        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+          server-id: central
+          server-username-env-var: CENTRAL_TOKEN_USERNAME
+          server-password-env-var: CENTRAL_TOKEN_PASSWORD
+          gpg-private-key: ${{ secrets.GPG_PRIVATE_KEY }}
+          gpg-passphrase: GPG_PASSPHRASE
+
+      - name: Set release version
+        run: mvn --batch-mode versions:set -DnewVersion=${{ inputs.release-version }} -DgenerateBackupPoms=false
+
+      - name: Commit release version
+        run: |
+          git commit -am "chore: release ${{ inputs.release-version }}"
+          echo "RELEASE_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+
+      - name: Build, sign and publish to Central
+        env:
+          CENTRAL_TOKEN_USERNAME: ${{ secrets.CENTRAL_TOKEN_USERNAME }}
+          CENTRAL_TOKEN_PASSWORD: ${{ secrets.CENTRAL_TOKEN_PASSWORD }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: mvn --batch-mode -Prelease -DskipTests deploy
+
+      - name: Tag release
+        run: git tag "v${{ inputs.release-version }}" "${{ env.RELEASE_SHA }}"
+
+      - name: Set next development version
+        run: mvn --batch-mode versions:set -DnewVersion=${{ inputs.next-version }} -DgenerateBackupPoms=false
+
+      - name: Commit next development version
+        run: git commit -am "chore: prepare next development iteration"
+
+      - name: Push commits and tag
+        run: |
+          git push origin "${{ inputs.branch }}"
+          git push origin "v${{ inputs.release-version }}"
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v${{ inputs.release-version }}" \
+            --title "${{ inputs.release-version }}" \
+            --generate-notes \
+            --target "${{ env.RELEASE_SHA }}"

@@ -1,0 +1,48 @@
+name: Publish snapshot
+
+# Publishes the current -SNAPSHOT to the Central Portal snapshot repository on
+# every push to main. No-op if the version is not a snapshot (e.g. right after
+# a release, before the next development version is committed).
+#
+# Requires the namespace to have snapshot publishing enabled:
+# https://central.sonatype.com/publishing/namespaces
+#
+# Secrets required:
+#   CENTRAL_TOKEN_USERNAME - Sonatype Central user token username
+#   CENTRAL_TOKEN_PASSWORD - Sonatype Central user token password
+
+on:
+  push:
+    branches: [ main ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  publish-snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Java
+        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+          server-id: central
+          server-username-env-var: CENTRAL_TOKEN_USERNAME
+          server-password-env-var: CENTRAL_TOKEN_PASSWORD
+
+      - name: Determine project version
+        id: version
+        run: echo "version=$(mvn --quiet help:evaluate -Dexpression=project.version -DforceStdout)" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy snapshot
+        if: endsWith(steps.version.outputs.version, '-SNAPSHOT')
+        env:
+          CENTRAL_TOKEN_USERNAME: ${{ secrets.CENTRAL_TOKEN_USERNAME }}
+          CENTRAL_TOKEN_PASSWORD: ${{ secrets.CENTRAL_TOKEN_PASSWORD }}
+        run: mvn --batch-mode --no-transfer-progress -DskipTests deploy
