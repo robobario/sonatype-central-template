@@ -75,7 +75,8 @@ jobs:
         run: mvn --batch-mode versions:set -DnewVersion=${{ inputs.next-version }} -DgenerateBackupPoms=false
 
       - name: Commit next development version
-        run: git commit -am "chore: prepare next development iteration"
+        run: |
+          git commit -am "chore: prepare next development iteration"
 
       - name: Push commits and tag
         run: |
